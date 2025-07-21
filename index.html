@@ -598,6 +598,13 @@
       });
     });
 
+    function formatNumber(num) {
+      if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+      }
+      return num.toFixed(2);
+    }
+
     function updateChart() {
       const remaining = Math.max(0, totalIncome - totalExpenses);
       chart.data.datasets[0].data = [remaining, totalExpenses];
@@ -623,12 +630,12 @@
         .reduce((sum, t) => sum + t.amount, 0);
 
       // Update stats
-      document.getElementById('incomeValue').textContent = `₱${totalIncome.toFixed(2)}`;
-      document.getElementById('expenseValue').textContent = `₱${totalExpenses.toFixed(2)}`;
-      document.getElementById('remainingValue').textContent = `₱${remaining.toFixed(2)}`;
+      document.getElementById('incomeValue').textContent = `₱${formatNumber(totalIncome)}`;
+      document.getElementById('expenseValue').textContent = `₱${formatNumber(totalExpenses)}`;
+      document.getElementById('remainingValue').textContent = `₱${formatNumber(remaining)}`;
       document.getElementById('transactionCount').textContent = transactions.length;
-      document.getElementById('dailyBudgetValue').textContent = `₱${dailyBudget.toFixed(2)}`;
-      document.getElementById('dailySpentValue').textContent = `₱${dailyExpenses.toFixed(2)}`;
+      document.getElementById('dailyBudgetValue').textContent = `₱${formatNumber(dailyBudget)}`;
+      document.getElementById('dailySpentValue').textContent = `₱${formatNumber(dailyExpenses)}`;
 
       // Update daily spent color based on budget status
       const dailySpentElement = document.getElementById('dailySpentValue');
@@ -748,7 +755,7 @@
         <div class="transaction-item">
           <div class="transaction-details">
             <div class="transaction-amount ${transaction.type === 'income' ? 'positive' : 'negative'}">
-              ${transaction.type === 'income' ? '+' : '-'}₱${transaction.amount.toFixed(2)}
+              ${transaction.type === 'income' ? '+' : '-'}₱${formatNumber(transaction.amount)}
             </div>
             <div><strong>${transaction.category}</strong></div>
             <div class="transaction-description">${transaction.description}</div>
@@ -839,9 +846,9 @@
       animateStats();
     }, 100);
   </script>
-<!-- Firebase SDKs -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"></script>
+<!-- Firebase SDKs v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 
 <script>
   const firebaseConfig = {
@@ -858,38 +865,106 @@
 
   const docRef = db.collection("wallets").doc("shared");
 
+  // Load data from Firebase on page load
   docRef.onSnapshot((doc) => {
     const data = doc.data();
     if (data?.expenses) {
       transactions = data.expenses;
+      // Recalculate totals from Firebase data
+      totalIncome = 0;
+      totalExpenses = 0;
+      transactions.forEach(transaction => {
+        if (transaction.type === 'income') {
+          totalIncome += transaction.amount;
+        } else {
+          totalExpenses += transaction.amount;
+        }
+      });
       displayTransactions();
       updateChart();
     }
   });
 
-  async function addTransaction() {
+  // Override the original addTransaction function for Firebase integration
+  const originalAddTransaction = addTransaction;
+  addTransaction = async function() {
+    const transactionType = document.querySelector('input[name="transactionType"]:checked').value;
+    const category = document.getElementById('categoryInput').value.trim();
+    const amount = parseFloat(document.getElementById('amount').value);
+    const description = document.getElementById('description').value.trim();
+
+    if (!amount || amount <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    if (!category) {
+      alert("Please enter what type of " + transactionType + " this is.");
+      return;
+    }
+
     const transaction = {
       id: Date.now(),
-      category: document.getElementById('categoryInput').value.trim(),
-      amount: parseFloat(document.getElementById('amount').value),
-      description: document.getElementById('description').value.trim() || 'No description',
+      category: category,
+      amount: amount,
+      description: description || 'No description',
       date: new Date().toLocaleString(),
       rawDate: new Date(),
-      type: document.querySelector('input[name="transactionType"]:checked').value
+      type: transactionType
     };
 
     transactions.unshift(transaction);
-    await docRef.set({ expenses: transactions });
-    displayTransactions();
-    updateChart();
-  }
 
-  async function deleteTransaction(id) {
-    transactions = transactions.filter(t => t.id !== id);
-    await docRef.set({ expenses: transactions });
-    displayTransactions();
+    if (transactionType === 'income') {
+      totalIncome += amount;
+    } else {
+      totalExpenses += amount;
+    }
+
+    // Clear form
+    document.getElementById('categoryInput').value = '';
+    document.getElementById('amount').value = '';
+    document.getElementById('description').value = '';
+
+    // Save to Firebase
+    try {
+      await docRef.set({ expenses: transactions });
+    } catch (error) {
+      console.error("Error saving to Firebase:", error);
+      alert("Error saving transaction. Please try again.");
+    }
+
     updateChart();
-  }
+    displayTransactions();
+  };
+
+  // Override the original deleteTransaction function for Firebase integration
+  const originalDeleteTransaction = deleteTransaction;
+  deleteTransaction = async function(id) {
+    const transaction = transactions.find(t => t.id === id);
+    if (!transaction) return;
+
+    if (confirm('Are you sure you want to delete this transaction?')) {
+      transactions = transactions.filter(t => t.id !== id);
+      
+      if (transaction.type === 'income') {
+        totalIncome -= transaction.amount;
+      } else {
+        totalExpenses -= transaction.amount;
+      }
+
+      // Save to Firebase
+      try {
+        await docRef.set({ expenses: transactions });
+      } catch (error) {
+        console.error("Error deleting from Firebase:", error);
+        alert("Error deleting transaction. Please try again.");
+      }
+
+      updateChart();
+      displayTransactions();
+    }
+  };
 </script>
 </body>
 </html>
